@@ -4,7 +4,7 @@
 // the longest one.
 
 (function (){
-console.log('2loading')
+console.debug('media source content script')
 
 let sourceId = 0
 let bufferId = 100
@@ -22,12 +22,15 @@ let mainVideoElement
  */
 let mainBuffer
 
+/** @type {{start: number, end: number}[]} */
+const timesSeen = []
+
 /** @type {HTMLVideoElement[]} */
 const allVideoElements = []
 
 const mediaSourceObjectUrlLookup = new WeakMap()
 
-window.allBuffers = []
+// window.allBuffers = []
 
 /**
  * @typedef {Object} BufferStorageItem
@@ -41,10 +44,12 @@ window.allBuffers = []
  */
 const bufferStorage = new Map()
 const oldWindowMediaSource = window.MediaSource
-const testMediaSource = new oldWindowMediaSource()
-window.testMediaSource = testMediaSource
-window.testMediaSource._braveIsTest = true
-const video = document.createElement('video')
+const showTest = false
+if (showTest) {
+  const testMediaSource = new oldWindowMediaSource()
+  window.testMediaSource = testMediaSource
+  window.testMediaSource._braveIsTest = true
+  const video = document.createElement('video')
   video.className = 'brave'
   video.src = URL.createObjectURL(testMediaSource)
   video.controls = true
@@ -54,19 +59,27 @@ const video = document.createElement('video')
   video.style.right = '25vw'
   video.style.bottom = '25vh'
   window.testPlayer = video
+}
 
 const oldCreateObjectUrl = URL.createObjectURL
 URL.createObjectURL = function (obj) {
   const url = oldCreateObjectUrl(obj)
-  console.log('create object url', obj, url)
+  console.debug('create object url', obj, url)
   mediaSourceObjectUrlLookup.set(obj, url)
   return url
 }
 
+const timeCacheStatus = []
+window.timeCacheStatus = timeCacheStatus
+
 function getNextGapInCache () {
   const duration = Math.ceil(mainSource.duration)
-  let timeCacheStatus = Array(duration).fill(false)
-  for (const sourceBuffer of testMediaSource.sourceBuffers) {
+  const diff = duration - timeCacheStatus.length
+  if (diff) {
+    timeCacheStatus.length = duration
+    timeCacheStatus.fill(false, duration - diff)
+  }
+  for (const sourceBuffer of mainSource.sourceBuffers) {
     const timeItems = sourceBuffer.buffered.length
     for (let i = 0; i < sourceBuffer.buffered.length; i++) {
       timeCacheStatus.fill(true, Math.floor(sourceBuffer.buffered.start(i)), Math.ceil(sourceBuffer.buffered.end(i)))
@@ -106,18 +119,18 @@ class NewMediaSource extends MediaSource {
     mainSource = this
     // TODO: if already loaded, iterate through video players and check if this is
     // the source for it
-    console.log('aNewMediaSoffurces', this._braveSourceId, this)
+    console.debug('aNewMediaSoffurces', this._braveSourceId, this)
     this.sourceBuffers.addEventListener('addsourcebuffer', (p, e) => {
-      console.log('add source buffer', this._braveSourceId, p, e)
+      console.debug('add source buffer', this._braveSourceId, p, e)
     })
     this.sourceBuffers.addEventListener('removesourcebuffer', (p, e) => {
-      console.log('remove source buffer', this._braveSourceId, p, e)
+      console.debug('remove source buffer', this._braveSourceId, p, e)
     })
     this.activeSourceBuffers.addEventListener('addsourcebuffer', (p, e) => {
-      console.log('active add source buffer', this._braveSourceId, p, e)
+      console.debug('active add source buffer', this._braveSourceId, p, e)
     })
     this.activeSourceBuffers.addEventListener('removesourcebuffer', (p, e) => {
-      console.log('active remove source buffer', this._braveSourceId, p, e)
+      console.debug('active remove source buffer', this._braveSourceId, p, e)
     })
   }
 
@@ -130,16 +143,16 @@ class NewMediaSource extends MediaSource {
     if (type.includes('video')) {
       mainBuffer = buffer
     }
-    console.log('direct add source buffer', this._braveSourceId, buffer._braveBufferId, this, type, buffer)
-    window.allBuffers.push(buffer)
+    console.debug('direct add source buffer', this._braveSourceId, buffer._braveBufferId, this, type, buffer)
+    // window.allBuffers.push(buffer)
     // mirror media source so we can see what data we have
-    // window.setTimeout(() => {
-      console.log('adding test buffer')
+    console.debug('adding test buffer')
+    if (showTest) {
       const testBuffer = testMediaSource.addSourceBuffer(type)
-      console.log('added test buffer', testBuffer)
+      console.debug('added test buffer', testBuffer)
       testBuffer._braveBufferId = buffer._braveBufferId
       testBuffer._braveTest = true
-    // }, 1)
+    }
 
     return buffer
   }
@@ -149,39 +162,40 @@ class NewMediaSource extends MediaSource {
 class PlaylistSourceBuffer extends SourceBuffer {
   constructor(...args) {
     super(...args)
-    console.log('ctor source buffer', ...args)
+    console.debug('ctor source buffer', ...args)
   }
   abort() {
-    console.log('abort sourcebuffer')
+    console.debug('abort sourcebuffer')
     super.abort()
   }
   changeType(type) {
-    console.log('change type', this, type)
+    console.debug('change type', this, type)
     super.changeType(type)
   }
   appendWindowStart(...args) {
-    console.log('append window start', ...args)
+    console.debug('append window start', ...args)
     return super.appendWindowStart(...args)
   }
   appendWindowEnd(...args) {
-    console.log('append window End', ...args)
+    console.debug('append window End', ...args)
     return super.appendWindowEnd(...args)
   }
   onUpdateComplete() {
-    console.log('on update complete')
+    console.debug('on update complete')
     this.onUpdateEnd()
     if (!this._pendingData) {
       console.error('append buffer no data!')
     }
     consumeBuffer(this, this._pendingData)
+    // TODO: call seekToNextRangeOrCompleteDebounced when consumeBuffer hasn't been called in ~10ms - ~20ms. Avoid aborts
     if (this._braveSourceBufferType.includes('video')) {
       setTimeout(() => {
         seekToNextRangeOrCompleteDebounced()
-      }, 100)
+      }, 1)
     }
   }
   onUpdateAbort() {
-    console.log('on update abort')
+    console.debug('on update abort')
     this.onUpdateEnd()
   }
   onUpdateEnd() {
@@ -198,12 +212,14 @@ class PlaylistSourceBuffer extends SourceBuffer {
     if (this._braveTest) {
       return super.appendBuffer(data)
     }
-    console.log('append buffer', this._braveSourceId, this._braveBufferId, data)
-    const testBuffer = Array.from(testMediaSource.sourceBuffers).find(b => b._braveBufferId === this._braveBufferId)
-    if (!testBuffer) {
-      console.error("testBuffer not found!")
-    } else {
-      testBuffer.appendBuffer(data.slice(0))
+    console.debug('append buffer', this._braveSourceId, this._braveBufferId, data)
+    if (showTest) {
+      const testBuffer = Array.from(testMediaSource.sourceBuffers).find(b => b._braveBufferId === this._braveBufferId)
+      if (!testBuffer) {
+        console.error("testBuffer not found!")
+      } else {
+        testBuffer.appendBuffer(data.slice(0))
+      }
     }
     this._pendingData = data.slice(0)
     super.appendBuffer(data)
@@ -211,11 +227,11 @@ class PlaylistSourceBuffer extends SourceBuffer {
     this.addEventListener('update', this.onUpdateComplete)
   }
   remove(...args) {
-    console.log('remove buffer', this._braveSourceId, this._braveBufferId, ...args)
+    console.debug('remove buffer', this._braveSourceId, this._braveBufferId, ...args)
     return super.remove(...args)
   }
   appendBufferAsync(...args) {
-    console.log('append bufferAsync', this._braveSourceId, this._braveBufferId, ...args)
+    console.debug('append bufferAsync', this._braveSourceId, this._braveBufferId, ...args)
     return super.appendBufferAsync(...args)
   }
 }
@@ -228,27 +244,31 @@ window.addEventListener('DOMContentLoaded', () => {
   const url = mediaSourceObjectUrlLookup.get(mainSource)
   if (videoElement && mainSource && url && videoElement.src === url) {
       mainVideoElement = videoElement
-      console.log('found main source and video element')
+      console.debug('found main source and video element')
       // doSaving()
   }
-  console.log('found video element', videoElement)
+  console.debug('found video element', videoElement)
   setUpTestView()
 })
 
 function setUpTestView () {
-  document.body.appendChild(testPlayer)
+  if (showTest) {
+    document.body.appendChild(testPlayer)
+  }
 }
 
 // function doSaving() {
 //   const videoLength = mainSource.duration
-//   console.log('video length', videoLength)
-//   // console.log('segment count', mainBuffer.videoTracks.length)
+//   console.debug('video length', videoLength)
+//   // console.debug('segment count', mainBuffer.videoTracks.length)
 //   mainBuffer.addEventListener('update', (s, e) => {
-//     console.log('doSaving buffer update', s, e)
+//     console.debug('doSaving buffer update', s, e)
 //     // getNextGap()
 //   })
 //   // getNextGap()
 // }
+
+let totalCacheSize = 0
 
 /**
  *
@@ -272,7 +292,9 @@ function consumeBuffer(buffer, data) {
   const bufferCacheItem = {
     data
   }
-  console.log('consumeBuffer', buffer.updating, buffer._braveBufferId, bufferCacheItem)
+  // TODO: save data
+  // TODO: it would still be useful to know which portion of the video corresponds to
+  console.log('consumeBuffer', totalCacheSize += data.length)
   cache.buffers.push(bufferCacheItem)
 }
 
@@ -283,23 +305,26 @@ function seekToNextRangeOrComplete() {
     onComplete()
   } else {
     console.log('seekToNextRangeOrComplete seeking to ' + firstGapInTime)
+    if (!mainVideoElement){
+      mainVideoElement = document.querySelector('video')
+    }
     if (mainVideoElement)
       mainVideoElement.currentTime = firstGapInTime
   }
 }
 
-const seekToNextRangeOrCompleteDebounced = debounce(seekToNextRangeOrComplete, 200)
+const seekToNextRangeOrCompleteDebounced = debounce(seekToNextRangeOrComplete, 1000)
 
 // function getNextGap() {
 //   let lastEnd = 0
 //   const segmentCount = mainBuffer.videoTracks.length
-//   console.log(`getNextGap: segment count ${segmentCount}, ${mainBuffer.buffered.length}`)
+//   console.debug(`getNextGap: segment count ${segmentCount}, ${mainBuffer.buffered.length}`)
 //   // TODO: check gaps in what we've cached, not the sourcebuffer, since it will call remove
 //   for (let i = 0; i < segmentCount; i++) {
 //     const start = mainBuffer.buffered.start(i)
-//     console.log(`getNextGap: checking ${i}: ${lastEnd} - ${start}`)
+//     console.debug(`getNextGap: checking ${i}: ${lastEnd} - ${start}`)
 //     if (start !== lastEnd) {
-//       console.log('getNextGap: have gap between ' + lastEnd + ' and ' + start + '. Seeking...')
+//       console.debug('getNextGap: have gap between ' + lastEnd + ' and ' + start + '. Seeking...')
 //       mainVideoElement.currentTime = lastEnd
 //       return
 //     }
@@ -308,13 +333,13 @@ const seekToNextRangeOrCompleteDebounced = debounce(seekToNextRangeOrComplete, 2
 //   if (lastEnd === mainSource.duration) {
 //     onComplete()
 //   } else {
-//     console.log(`getNextGap: seeking to ${lastEnd}`)
+//     console.debug(`getNextGap: seeking to ${lastEnd}`)
 //     mainVideoElement.currentTime = lastEnd
 //   }
 // }
 
 function onComplete() {
-  console.log('video completed!')
+  console.debug('video completed!')
 }
 
 })()
