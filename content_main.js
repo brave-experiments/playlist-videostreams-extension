@@ -8,6 +8,7 @@ console.debug('media source content script')
 
 let sourceId = 0
 let bufferId = 100
+const Id = new Date().getTime().toString()
 
 /**
  * @type {MediaSource}
@@ -61,6 +62,8 @@ if (showTest) {
   window.testPlayer = video
 }
 
+// Patch URL.createObjectURL so we can compare a <video>.src to see
+// if it's attached to a specific MediaSource
 const oldCreateObjectUrl = URL.createObjectURL
 URL.createObjectURL = function (obj) {
   const url = oldCreateObjectUrl(obj)
@@ -71,6 +74,12 @@ URL.createObjectURL = function (obj) {
 
 const timeCacheStatus = []
 window.timeCacheStatus = timeCacheStatus
+
+function sendMessage (message) {
+  const messageEvent = new CustomEvent('message-for-extension', { detail: message })
+  messageEvent.message = message
+  window.dispatchEvent(messageEvent)
+}
 
 function getNextGapInCache () {
   const duration = Math.ceil(mainSource.duration)
@@ -245,6 +254,11 @@ window.addEventListener('DOMContentLoaded', () => {
   if (videoElement && mainSource && url && videoElement.src === url) {
       mainVideoElement = videoElement
       console.debug('found main source and video element')
+      sendMessage({
+        type: "addItem",
+        id: Id,
+        name: document.title
+      });
       // doSaving()
   }
   console.debug('found video element', videoElement)
@@ -269,7 +283,9 @@ function setUpTestView () {
 // }
 
 let totalCacheSize = 0
-
+// bufferIndex is just for sorting, not accurate. Might be worthwhile instead sending the video timestamp that the buffer was received at, so we can
+// send the buffer at that timestamp when re-creating.
+let bufferIndex = 0
 /**
  *
  * @param {SourceBuffer} buffer
@@ -280,22 +296,37 @@ function consumeBuffer(buffer, data) {
   /**
    * @type {BufferStorageItem}
    */
-  let cache = bufferStorage.get(buffer)
-  if (!cache) {
-    cache = {
-      bufferId: buffer._braveBufferId,
-      buffers: [],
-      mimeType: buffer._braveSourceBufferType
-    }
-    bufferStorage.set(buffer, cache)
-  }
-  const bufferCacheItem = {
-    data
-  }
+  // let cache = bufferStorage.get(buffer)
+  // if (!cache) {
+  //   cache = {
+  //     bufferId: buffer._braveBufferId,
+  //     buffers: [],
+  //     mimeType: buffer._braveSourceBufferType
+  //   }
+  //   bufferStorage.set(buffer, cache)
+  // }
+  // const bufferCacheItem = {
+  //   data
+  // }
   // TODO: save data
   // TODO: it would still be useful to know which portion of the video corresponds to
+
+  // Convert to object url as the buffer will be too large for chrome.runtime.sendMessage
+  const blob = new Blob([data], {type: 'application/octet-stream'});
+  const blobUrl = URL.createObjectURL(blob)
+
+  sendMessage({
+    type: "addData",
+    id: new Date().getTime().toString(),
+    itemId: Id,
+    index: ++bufferIndex,
+    blobUrl
+  });
+
+
   console.log('consumeBuffer', totalCacheSize += data.length)
-  cache.buffers.push(bufferCacheItem)
+
+  // cache.buffers.push(bufferCacheItem)
 }
 
 function seekToNextRangeOrComplete() {
@@ -306,6 +337,7 @@ function seekToNextRangeOrComplete() {
   } else {
     console.log('seekToNextRangeOrComplete seeking to ' + firstGapInTime)
     if (!mainVideoElement){
+      // TODO: compare url to this media source
       mainVideoElement = document.querySelector('video')
     }
     if (mainVideoElement)
