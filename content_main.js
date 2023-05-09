@@ -1,10 +1,15 @@
-/* This runs after a web page loads */
+/* This runs in main world after a web page loads */
 
 // TODO: attach a class instance of the below functionality to every video instance, and then just save them all or choose
 // the longest one.
 
 (function (){
-console.debug('media source content script')
+
+if (!window.location.hash.includes('brave-save')) {
+  console.debug('Will not intercept MediaSource data as url does not contain #brave-save')
+  return
+}
+console.debug('Will attempt to intercept MediaSource data...')
 
 let sourceId = 0
 let bufferId = 100
@@ -45,7 +50,9 @@ const mediaSourceObjectUrlLookup = new WeakMap()
  */
 const bufferStorage = new Map()
 const oldWindowMediaSource = window.MediaSource
-const showTest = false
+
+// Indicates whether to show a proof-of-concept player with a source of the duplicated intercepted buffers
+const showTest = document.location.hash.includes('-show-test')
 if (showTest) {
   const testMediaSource = new oldWindowMediaSource()
   window.testMediaSource = testMediaSource
@@ -67,7 +74,7 @@ if (showTest) {
 const oldCreateObjectUrl = URL.createObjectURL
 URL.createObjectURL = function (obj) {
   const url = oldCreateObjectUrl(obj)
-  console.debug('create object url', obj, url)
+  console.debug('URL.createObjectURL (patched) was called', obj, url)
   mediaSourceObjectUrlLookup.set(obj, url)
   return url
 }
@@ -79,22 +86,6 @@ function sendMessage (message) {
   const messageEvent = new CustomEvent('message-for-extension', { detail: message })
   messageEvent.message = message
   window.dispatchEvent(messageEvent)
-}
-
-function getNextGapInCache () {
-  const duration = Math.ceil(mainSource.duration)
-  const diff = duration - timeCacheStatus.length
-  if (diff) {
-    timeCacheStatus.length = duration
-    timeCacheStatus.fill(false, duration - diff)
-  }
-  for (const sourceBuffer of mainSource.sourceBuffers) {
-    const timeItems = sourceBuffer.buffered.length
-    for (let i = 0; i < sourceBuffer.buffered.length; i++) {
-      timeCacheStatus.fill(true, Math.floor(sourceBuffer.buffered.start(i)), Math.ceil(sourceBuffer.buffered.end(i)))
-    }
-  }
-  return timeCacheStatus.indexOf(false)
 }
 
 function debounce (fn, bufferInterval, ...args) {
@@ -109,7 +100,7 @@ function debounce (fn, bufferInterval, ...args) {
   };
 };
 
-
+// TODO: perhaps patch document.createElement to more accurately find the right video / audio element added
 // const oldCreateElement = document.createElement
 // document.createElement = function(...params) {
 //   const element = oldCreateElement.call(document, params)
@@ -271,17 +262,6 @@ function setUpTestView () {
   }
 }
 
-// function doSaving() {
-//   const videoLength = mainSource.duration
-//   console.debug('video length', videoLength)
-//   // console.debug('segment count', mainBuffer.videoTracks.length)
-//   mainBuffer.addEventListener('update', (s, e) => {
-//     console.debug('doSaving buffer update', s, e)
-//     // getNextGap()
-//   })
-//   // getNextGap()
-// }
-
 let totalCacheSize = 0
 // bufferIndex is just for sorting, not accurate. Might be worthwhile instead sending the video timestamp that the buffer was received at, so we can
 // send the buffer at that timestamp when re-creating.
@@ -292,29 +272,12 @@ let bufferIndex = 0
  * @param {Uint8Array} data
  */
 function consumeBuffer(buffer, data) {
-  // We already have this buffer in storage?
   /**
    * @type {BufferStorageItem}
    */
-  // let cache = bufferStorage.get(buffer)
-  // if (!cache) {
-  //   cache = {
-  //     bufferId: buffer._braveBufferId,
-  //     buffers: [],
-  //     mimeType: buffer._braveSourceBufferType
-  //   }
-  //   bufferStorage.set(buffer, cache)
-  // }
-  // const bufferCacheItem = {
-  //   data
-  // }
-  // TODO: save data
-  // TODO: it would still be useful to know which portion of the video corresponds to
-
   // Convert to object url as the buffer will be too large for chrome.runtime.sendMessage
   const blob = new Blob([data], {type: 'application/octet-stream'});
   const blobUrl = URL.createObjectURL(blob)
-
   sendMessage({
     type: "addData",
     id: new Date().getTime().toString(),
@@ -323,10 +286,23 @@ function consumeBuffer(buffer, data) {
     blobUrl
   });
 
-
   console.log('consumeBuffer', totalCacheSize += data.length)
+}
 
-  // cache.buffers.push(bufferCacheItem)
+function getNextGapInCache () {
+  const duration = Math.ceil(mainSource.duration)
+  const diff = duration - timeCacheStatus.length
+  if (diff) {
+    timeCacheStatus.length = duration
+    timeCacheStatus.fill(false, duration - diff)
+  }
+  for (const sourceBuffer of mainSource.sourceBuffers) {
+    const timeItems = sourceBuffer.buffered.length
+    for (let i = 0; i < sourceBuffer.buffered.length; i++) {
+      timeCacheStatus.fill(true, Math.floor(sourceBuffer.buffered.start(i)), Math.ceil(sourceBuffer.buffered.end(i)))
+    }
+  }
+  return timeCacheStatus.indexOf(false)
 }
 
 function seekToNextRangeOrComplete() {
@@ -345,30 +321,7 @@ function seekToNextRangeOrComplete() {
   }
 }
 
-const seekToNextRangeOrCompleteDebounced = debounce(seekToNextRangeOrComplete, 1000)
-
-// function getNextGap() {
-//   let lastEnd = 0
-//   const segmentCount = mainBuffer.videoTracks.length
-//   console.debug(`getNextGap: segment count ${segmentCount}, ${mainBuffer.buffered.length}`)
-//   // TODO: check gaps in what we've cached, not the sourcebuffer, since it will call remove
-//   for (let i = 0; i < segmentCount; i++) {
-//     const start = mainBuffer.buffered.start(i)
-//     console.debug(`getNextGap: checking ${i}: ${lastEnd} - ${start}`)
-//     if (start !== lastEnd) {
-//       console.debug('getNextGap: have gap between ' + lastEnd + ' and ' + start + '. Seeking...')
-//       mainVideoElement.currentTime = lastEnd
-//       return
-//     }
-//     lastEnd = mainBuffer.buffered.end(i)
-//   }
-//   if (lastEnd === mainSource.duration) {
-//     onComplete()
-//   } else {
-//     console.debug(`getNextGap: seeking to ${lastEnd}`)
-//     mainVideoElement.currentTime = lastEnd
-//   }
-// }
+const seekToNextRangeOrCompleteDebounced = debounce(seekToNextRangeOrComplete, 100)
 
 function onComplete() {
   console.debug('video completed!')
