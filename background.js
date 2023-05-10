@@ -1,3 +1,5 @@
+import { Base64 } from 'js-base64'
+
 // open a connection to the database
 const request = indexedDB.open("SavedItems", 1);
 
@@ -106,7 +108,9 @@ function getDataForItem(itemId, startIndex = 0, callback) {
     }
     // We should be at the data item we want to get
     const dataRaw = cursor.value.data
-    const data = new Uint8Array(dataRaw)
+    // TODO: find a way to transmit uint8array from background more efficiently
+    const data = Base64.fromUint8Array(new Uint8Array(dataRaw))
+
     value = {
       ...cursor.value,
       data
@@ -137,11 +141,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true; // need to return true to indicate asynchronous response
     case "getDataForItem":
-      getDataForItem(message.itemId, message.startIndex, (data, nextIndex) => {
+      getDataForItem(message.itemId, message.startIndex, (data) => {
         sendResponse(data);
       });
       return true; // need to return true to indicate asynchronous response
     default:
       console.warn("Unknown message type:", message.type);
   }
-});
+})

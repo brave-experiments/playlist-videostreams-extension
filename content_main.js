@@ -185,8 +185,9 @@ class PlaylistSourceBuffer extends SourceBuffer {
     this.onUpdateEnd()
     if (!this._pendingData) {
       console.error('append buffer no data!')
+    } else {
+      consumeBuffer(this, this._pendingData)
     }
-    consumeBuffer(this, this._pendingData)
     // TODO: call seekToNextRangeOrCompleteDebounced when consumeBuffer hasn't been called in ~10ms - ~20ms. Avoid aborts
     if (this._braveSourceBufferType.includes('video')) {
       setTimeout(() => {
@@ -275,6 +276,9 @@ function consumeBuffer(buffer, data) {
   /**
    * @type {BufferStorageItem}
    */
+  if (!data) {
+    return
+  }
   // Convert to object url as the buffer will be too large for chrome.runtime.sendMessage
   const blob = new Blob([data], {type: 'application/octet-stream'});
   const blobUrl = URL.createObjectURL(blob)

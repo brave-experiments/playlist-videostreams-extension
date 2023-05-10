@@ -1,0 +1,21 @@
+@at-root {
+h1 {
+  color: pink;
+}
+}
+
+.title {
+  color: green;
+}
+
+.listItem {
+  cursor: pointer;
+  margin: 6px;
+  border: dashed 1px black;
+  padding: 8px;
+}
+
+.player {
+  width: 640px;
+  height: 480px;
+}

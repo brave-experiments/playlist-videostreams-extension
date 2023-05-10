@@ -1,0 +1,1 @@
+This extension is a proof of concept for Brave Playlist. It shows the possibility of intercepting MediaSource and SourceBuffer data, specifically via SourceBuffer.appendBuffer. It achieves this by sending those chunks to a DB and then deserializing and re-constructing the SourceBuffer and MediaSource object on-demand in order to play the video at a later time.
