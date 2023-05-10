@@ -14,6 +14,7 @@ console.debug('Will attempt to intercept MediaSource data...')
 let sourceId = 0
 let bufferId = 100
 const Id = new Date().getTime().toString()
+let hasSavedItem = false
 
 /**
  * @type {MediaSource}
@@ -142,6 +143,18 @@ class NewMediaSource extends MediaSource {
     buffer._braveSourceBufferType = type
     if (type.includes('video')) {
       mainBuffer = buffer
+      buffer._braveIsVideo = true
+      if (!hasSavedItem) {
+        sendMessage({
+          type: "addItem",
+          codec: type,
+          id: Id,
+          name: document.title
+        });
+        hasSavedItem = true
+      } else {
+        console.error('had already saved item!!!')
+      }
     }
     console.debug('direct add source buffer', this._braveSourceId, buffer._braveBufferId, this, type, buffer)
     // window.allBuffers.push(buffer)
@@ -171,14 +184,6 @@ class PlaylistSourceBuffer extends SourceBuffer {
   changeType(type) {
     console.debug('change type', this, type)
     super.changeType(type)
-  }
-  appendWindowStart(...args) {
-    console.debug('append window start', ...args)
-    return super.appendWindowStart(...args)
-  }
-  appendWindowEnd(...args) {
-    console.debug('append window End', ...args)
-    return super.appendWindowEnd(...args)
   }
   onUpdateComplete() {
     console.debug('on update complete')
@@ -222,7 +227,12 @@ class PlaylistSourceBuffer extends SourceBuffer {
         testBuffer.appendBuffer(data.slice(0))
       }
     }
-    this._pendingData = data.slice(0)
+    if (this._braveIsVideo) {
+      console.log('had video entry')
+      this._pendingData = data.slice(0)
+    } else {
+      console.log('had non video entry')
+    }
     super.appendBuffer(data)
     this.addEventListener('abort', this.onUpdateAbort)
     this.addEventListener('update', this.onUpdateComplete)
@@ -246,11 +256,11 @@ window.addEventListener('DOMContentLoaded', () => {
   if (videoElement && mainSource && url && videoElement.src === url) {
       mainVideoElement = videoElement
       console.debug('found main source and video element')
-      sendMessage({
-        type: "addItem",
-        id: Id,
-        name: document.title
-      });
+      // sendMessage({
+      //   type: "addItem",
+      //   id: Id,
+      //   name: document.title
+      // });
       // doSaving()
   }
   console.debug('found video element', videoElement)

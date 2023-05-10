@@ -17,11 +17,12 @@ request.onupgradeneeded = function(event) {
 };
 
 // add a new item to the "items" object store
-function addItem(id, name) {
+function addItem(id, name, codec) {
+  // TODO: we also need a buffer table with codec for each buffer
   const db = request.result;
   const tx = db.transaction("items", "readwrite");
   const store = tx.objectStore("items");
-  store.add({ id, name });
+  store.add({ id, name, codec });
   tx.oncomplete = function() {
     console.log("Item added to the database");
   };
@@ -129,7 +130,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('got message', message)
   switch (message.type) {
     case "addItem":
-      addItem(message.id, message.name);
+      addItem(message.id, message.name, message.codec);
       sendResponse()
       break
     case "addData":

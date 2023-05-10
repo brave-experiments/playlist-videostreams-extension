@@ -2,7 +2,7 @@ import { Base64 } from 'js-base64'
 import * as React from 'react'
 import styles from './popup.module.css'
 
-type Item = { id: string, name: string}
+type Item = { id: string, name: string, codec: string }
 
 async function getList (): Promise<Item[]> {
   return await chrome.runtime.sendMessage({
@@ -12,7 +12,8 @@ async function getList (): Promise<Item[]> {
 
 export default function List(props: {}) {
   const [items, setItems] = React.useState<Item[]>([])
-  const [itemId, setItemId] = React.useState<string>()
+  const [item, setItem] = React.useState<Item>()
+  const videoElementRef = React.useRef<HTMLVideoElement>(null)
 
   React.useEffect(() => {
     getList().then(backgroundItems => setItems(backgroundItems))
@@ -25,17 +26,24 @@ export default function List(props: {}) {
 
   React.useEffect(() => {
     // Reconstruct MediaSource
-    if (!itemId) {
+    if (!item) {
       return
     }
     mediaSource.current.addEventListener('sourceopen', async () => {
-      console.log('source open')
-      const buffer = mediaSource.current.addSourceBuffer('video/mp4; codecs="av01.0.05M.08"')
+      console.log('source open', item.codec)
+      videoElementRef.current?.play()
+      const buffer = mediaSource.current.addSourceBuffer(item.codec)
+      console.log('buffer', buffer)
       let nextIndex: number | undefined = 0
       while (nextIndex !== undefined) {
+        // TODO(petemill): only add data to the buffer when the video seek time
+        // requires it, otherwise we quickly get an error on the player
+        // (CHUNK_DEMUXER_ERROR_APPEND_FAILED)
+        // and I think it's due to adding too much data to the buffer.
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
         const data = await chrome.runtime.sendMessage({
           type: 'getDataForItem',
-          itemId,
+          itemId: item.id,
           startIndex: nextIndex
         }) as {
           nextIndex: number | undefined,
@@ -43,13 +51,21 @@ export default function List(props: {}) {
             data: string
           }
         }
+        console.log('data', data)
         if (buffer.updating) {
+          console.log('waiting for buffer...')
           await new Promise(resolve => {
             buffer.addEventListener('update', () => {
-              console.log('buffer update event')
+              console.log('...buffer update event')
               resolve
             })
           })
+        } else {
+          console.log('buffer not updating')
+        }
+        if (videoElementRef.current?.error){
+          console.log('could not append video, player had error:', videoElementRef.current.error)
+          return
         }
         nextIndex = data.nextIndex
         buffer.appendBuffer(Base64.toUint8Array(data.value.data))
@@ -57,14 +73,15 @@ export default function List(props: {}) {
 
     })
 
-  }, [itemId])
+  }, [item])
 
-  if (itemId) {
+  if (item) {
     return (
       <video
         className={styles.player}
         controls
         src={mediaSourceUrl}
+        ref={videoElementRef}
       />
     )
   }
@@ -74,7 +91,7 @@ export default function List(props: {}) {
   }
   return (<>
     {items.map(item => (
-      <div onClick={() => setItemId(item.id)} className={styles.listItem}>{item.name}</div>
+      <div onClick={() => setItem(item)} className={styles.listItem}>{item.name}</div>
     ))}
   </>)
 }
